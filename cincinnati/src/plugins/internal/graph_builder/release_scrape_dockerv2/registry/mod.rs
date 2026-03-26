@@ -259,21 +259,26 @@ async fn get_manifest_layers(
     let (tag, manifest, manifestref) =
         get_manifest_and_ref(tag, repo.to_owned(), &registry_client).await?;
 
-    // Try to read the architecture from the manifest
-    let arch = match manifest.architectures() {
-        Ok(archs) => {
-            if archs.len() == 1 {
-                archs.first().map(std::string::ToString::to_string)
-            } else {
-                Some(String::from("multi"))
+    // Determine whether this is a manifest list by checking the manifest type
+    // directly, rather than relying on the number of architectures. A manifest
+    // list with a single architecture (e.g. OKD SCOS releases) must still be
+    // treated as "multi" so that the caller resolves through to the actual
+    // image layers instead of trying to fetch manifest-reference digests as
+    // blobs.
+    let is_manifest_list = matches!(manifest, dkregistry::v2::manifest::Manifest::ML(_));
+
+    let arch = if is_manifest_list {
+        Some(String::from("multi"))
+    } else {
+        match manifest.architectures() {
+            Ok(archs) => archs.first().map(std::string::ToString::to_string),
+            Err(e) => {
+                error!(
+                    "could not get architecture from manifest for tag {}: {}",
+                    tag, e
+                );
+                None
             }
-        }
-        Err(e) => {
-            error!(
-                "could not get architecture from manifest for tag {}: {}",
-                tag, e
-            );
-            None
         }
     };
 
@@ -354,9 +359,10 @@ pub async fn fetch_releases(
                     }
                 };
 
-            // if the image is multi arch, we will have to get one image from the manifest list and
-            // use its metadata, because manifest lists are just collections of manifests and don't
-            // have their own layers with metadata files.
+            // If the manifest is a manifest list (regardless of the number of
+            // architectures it contains), resolve one image from the list and use
+            // its layers, because manifest lists don't have their own layers with
+            // metadata files.
             if arch.as_ref().unwrap() == "multi" {
                 let digest = layers_digests
                     .first()

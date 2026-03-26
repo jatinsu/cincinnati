@@ -198,7 +198,7 @@ $ cat release-manifests/image-references | head -n 10
 
 The architecture of a release image is determined by the following algorithm:
 
-- check if it is a manifest list of length > 1 by [media-types](https://github.com/openshift/docker-distribution/blob/main/docs/spec/manifest-v2-2.md#media-types).
+- check if it is a manifest list by [media-types](https://github.com/openshift/docker-distribution/blob/main/docs/spec/manifest-v2-2.md#media-types).
 
   ```console
   ### manifest list quay.io/openshift-release-dev/ocp-release:4.15.5-multi
@@ -219,13 +219,7 @@ The architecture of a release image is determined by the following algorithm:
   s390x
   ```
 
-* If it is a manifest list of `length > 1`, then the architecture is `multi`. 
-
-* If `length == 1` which is an very uncommon case in practice, it is counted as single-arch whose architecture can be calculated by the following command:
-
-  ```console
-  $ curl -sH 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' https://quay.io/v2/openshift-release-dev/ocp-release/manifests/4.15.5-multi | jq '.manifests[0].platform.architecture'
-  ```
+* If it is a manifest list (any number of architectures), then the architecture is `multi`. The graph builder detects manifest lists by checking the manifest type directly (the `Manifest::ML` variant from dkregistry), rather than counting architectures. This ensures that manifest lists containing a single architecture (e.g. OKD SCOS releases with only amd64) are handled correctly — the graph builder resolves through the manifest list to the actual image and its layers, instead of mistakenly treating the manifest-reference digests as blob digests.
 
 * If it is an image, its architecture is showed in its blob like `s390x` in the last twos commands above unless `release-manifests/release-metadata` [extracted from the release image](#update-image) indicates otherwise:
 
