@@ -2,11 +2,12 @@ path_prefix := "api/upgrades_info/"
 
 testdata_dir := "e2e/tests/testdata/"
 metadata_revision_file := "metadata_revision"
-metadata_reference :='reference_branch = "master"'
+metadata_reference :='reference_branch = "test-for-okd"'
 
 pause_secs := "9999999"
 registry := "https://quay.io"
-repository := "openshift-release-dev/ocp-release"
+# repository := "openshift-release-dev/ocp-release"
+repository := "okd/scos-release"
 credentials_file := "${HOME}/.docker/config.json"
 default_tracing_endpoint := "localhost:6831"
 
@@ -268,9 +269,9 @@ run-graph-builder:
 
 		[[plugin_settings]]
 		name = "github-secondary-metadata-scrape"
-		github_org = "openshift"
+		github_org = "jatinsu"
 		github_repo = "cincinnati-graph-data"
-		branch = "master"
+		branch = "test-for-okd"
 		output_directory = "${TMPDIR}"
 		{{metadata_reference}}
 

@@ -259,25 +259,15 @@ async fn get_manifest_layers(
     let (tag, manifest, manifestref) =
         get_manifest_and_ref(tag, repo.to_owned(), &registry_client).await?;
 
-    // Determine whether this is a manifest list by checking the manifest type
-    // directly, rather than relying on the number of architectures. A manifest
-    // list with a single architecture (e.g. OKD SCOS releases) must still be
-    // treated as "multi" so that the caller resolves through to the actual
-    // image layers instead of trying to fetch manifest-reference digests as
-    // blobs.
     let is_manifest_list = matches!(manifest, dkregistry::v2::manifest::Manifest::ML(_));
 
-    let arch = if is_manifest_list {
-        Some(String::from("multi"))
-    } else {
-        match manifest.architectures() {
-            Ok(archs) => archs.first().map(std::string::ToString::to_string),
-            Err(e) => {
-                error!(
-                    "could not get architecture from manifest for tag {}: {}",
-                    tag, e
-                );
-                None
+    // Try to read the architecture from the manifest
+    let arch = match manifest.architectures() {
+        Ok(archs) => {
+            if archs.len() == 1 && !is_manifest_list {
+                archs.first().map(std::string::ToString::to_string)
+            } else {
+                Some(String::from("multi"))
             }
         }
     };
