@@ -254,21 +254,29 @@ async fn get_manifest_layers(
     tag: String,
     repo: &str,
     registry_client: &Client,
-) -> Result<(Option<String>, String, Vec<String>), Error> {
+) -> Result<(Option<String>, String, Vec<String>, bool), Error> {
     trace!("[{}] Fetching release", tag);
     let (tag, manifest, manifestref) =
         get_manifest_and_ref(tag, repo.to_owned(), &registry_client).await?;
 
-    let is_manifest_list = matches!(manifest, dkregistry::v2::manifest::Manifest::ML(_));
+    // Check if the manifest is a manifest list regardless of how many children it has
+    let is_manifest_list = matches!(&manifest, dkregistry::v2::manifest::Manifest::ML(_));
 
     // Try to read the architecture from the manifest
     let arch = match manifest.architectures() {
         Ok(archs) => {
-            if archs.len() == 1 && !is_manifest_list {
+            if archs.len() == 1 {
                 archs.first().map(std::string::ToString::to_string)
             } else {
                 Some(String::from("multi"))
             }
+        }
+        Err(e) => {
+            error!(
+                "could not get architecture from manifest for tag {}: {}",
+                tag, e
+            );
+            None
         }
     };
 
@@ -284,7 +292,7 @@ async fn get_manifest_layers(
         .rev()
         .collect();
 
-    Ok((arch, manifestref, layers_digests))
+    Ok((arch, manifestref, layers_digests, is_manifest_list))
 }
 
 /// Fetches a vector of all release metadata from the given repository, hosted on the given
@@ -328,7 +336,7 @@ pub async fn fetch_releases(
         let misses = cache_misses.clone();
 
         async move {
-            let (arch, manifestref, mut layers_digests) =
+            let (arch, manifestref, mut layers_digests, is_manifest_list) =
                 match get_manifest_layers(tag.to_owned(), &repo, &registry_client).await {
                     Ok(result) => result,
                     Err(e) => {
@@ -349,11 +357,11 @@ pub async fn fetch_releases(
                     }
                 };
 
-            // If the manifest is a manifest list (regardless of the number of
-            // architectures it contains), resolve one image from the list and use
-            // its layers, because manifest lists don't have their own layers with
-            // metadata files.
-            if arch.as_ref().unwrap() == "multi" {
+            // if the image is multi arch, we will have to get one image from the manifest list and
+            // use its metadata, because manifest lists are just collections of manifests and don't
+            // have their own layers with metadata files. This applies even when the manifest list
+            // has a single child and arch is not "multi".
+            if arch.as_ref().unwrap() == "multi" || is_manifest_list {
                 let digest = layers_digests
                     .first()
                     .map(std::string::ToString::to_string)
@@ -363,7 +371,7 @@ pub async fn fetch_releases(
                     );
                 // TODO: destructured assignments are unstable in current rust, after updating rust
                 // change this to (_,_,layers_digests) and remove separate assignment from below.
-                let (_ml_arch, _ml_manifestref, ml_layers_digests) =
+                let (_ml_arch, _ml_manifestref, ml_layers_digests, _ml_is_manifest_list) =
                     get_manifest_layers(digest, &repo, &registry_client).await?;
                 layers_digests = ml_layers_digests;
             }
