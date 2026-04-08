@@ -361,18 +361,40 @@ pub async fn fetch_releases(
             // use its metadata, because manifest lists are just collections of manifests and don't
             // have their own layers with metadata files.
             if is_manifest_list {
-                let digest = layers_digests
-                    .first()
-                    .map(std::string::ToString::to_string)
-                    .expect(
-                        format!("no images referenced in ManifestList ref:{}", manifestref)
-                            .as_str(),
-                    );
+                let digest = match layers_digests.first() {
+                    Some(d) => d.to_string(),
+                    None => {
+                        error!(
+                            "no images referenced in ManifestList for {}:{} ref:{}",
+                            &repo, &tag, &manifestref
+                        );
+                        skip_releases.fetch_add(1, Ordering::SeqCst);
+                        return Ok(());
+                    }
+                };
                 // TODO: destructured assignments are unstable in current rust, after updating rust
                 // change this to (_,_,layers_digests) and remove separate assignment from below.
-                let (_ml_arch, _ml_manifestref, ml_layers_digests, _ml_is_manifest_list) =
-                    get_manifest_layers(digest, &repo, &registry_client).await?;
-                layers_digests = ml_layers_digests;
+                match get_manifest_layers(digest, &repo, &registry_client).await {
+                    Ok((_ml_arch, _ml_manifestref, ml_layers_digests, _ml_is_manifest_list)) => {
+                        layers_digests = ml_layers_digests;
+                    }
+                    Err(e) => {
+                        if tag.contains(".sig") {
+                            debug!(
+                                "encountered a signature for child manifest {}:{}: {}, ignoring this image",
+                                &repo, &tag, e
+                            );
+                            sig_releases.fetch_add(1, Ordering::SeqCst);
+                        } else {
+                            error!(
+                                "fetching child manifest from ManifestList for {}:{}: {}",
+                                &repo, &tag, e
+                            );
+                            skip_releases.fetch_add(1, Ordering::SeqCst);
+                        }
+                        return Ok(());
+                    }
+                };
             }
 
             let release = match lookup_or_fetch(
