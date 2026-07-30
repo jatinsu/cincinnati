@@ -336,18 +336,19 @@ pub async fn fetch_releases(
         let misses = cache_misses.clone();
 
         async move {
+            if tag.ends_with(".sig") {
+                debug!(
+                    "skipping signature tag {}:{}, not needed for update graph",
+                    &repo, &tag
+                );
+                sig_releases.fetch_add(1, Ordering::SeqCst);
+                return Ok(());
+            }
+
             let (arch, manifestref, mut layers_digests, is_manifest_list) =
                 match get_manifest_layers(tag.to_owned(), &repo, &registry_client).await {
                     Ok(result) => result,
                     Err(e) => {
-                        if tag.contains(".sig") {
-                            debug!(
-                                "encountered a signature for {}:{}: {}, ignoring this image",
-                                &repo, &tag, e
-                            );
-                            sig_releases.fetch_add(1, Ordering::SeqCst);
-                            return Ok(());
-                        }
                         error!(
                             "fetching manifest and manifestref for {}:{}: {}",
                             &repo, &tag, e
@@ -379,19 +380,11 @@ pub async fn fetch_releases(
                         layers_digests = ml_layers_digests;
                     }
                     Err(e) => {
-                        if tag.contains(".sig") {
-                            debug!(
-                                "encountered a signature for child manifest {}:{}: {}, ignoring this image",
-                                &repo, &tag, e
-                            );
-                            sig_releases.fetch_add(1, Ordering::SeqCst);
-                        } else {
-                            error!(
-                                "fetching child manifest from ManifestList for {}:{}: {}",
-                                &repo, &tag, e
-                            );
-                            skip_releases.fetch_add(1, Ordering::SeqCst);
-                        }
+                        error!(
+                            "fetching child manifest from ManifestList for {}:{}: {}",
+                            &repo, &tag, e
+                        );
+                        skip_releases.fetch_add(1, Ordering::SeqCst);
                         return Ok(());
                     }
                 };
@@ -598,7 +591,7 @@ async fn get_manifest_and_ref(
                 Ok(manifest_and_ref) => break manifest_and_ref,
                 Err(e) => {
                     // signatures are not identified by dkregistry and not useful for cincinnati graph, dont retry and return error
-                    if tag.contains(".sig") {
+                    if tag.ends_with(".sig") {
                         return Err(e);
                     }
 
